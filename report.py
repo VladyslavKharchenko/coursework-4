@@ -5,6 +5,8 @@ import logging
 import pandas as pd
 from matplotlib import pyplot as plt
 
+from models.author import Author
+from models.database import Database, CursorFromConnectionPool
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s:%(levelname)s:%(message)s', )
@@ -28,55 +30,59 @@ def run_command(command):
 
 
 def get_top7_tags_plt(csv_path=None):
-    if csv_path is None:
-        articles = pd.read_csv('articles.csv')
-    else:
-        articles = csv_path
-    tags = set(articles['tag'])  # get names of tags
-    tags_count = {}
-    for tag in tags:
-        tags_count.update({tag: len(articles[articles.tag == tag].drop_duplicates('title'))})  # key = tag name, value = counter
-    tags_count = {k: v for k, v in sorted(tags_count.items(), key=lambda item: item[1], reverse=True)}  # sort tags by counter, descending
-    tags_count_top7 = dict(list(tags_count.items())[:7])  # get 7 most popular tags
+    def top_7_tags():
+        Database.initialise(database="blog", user="root", password="root", host="localhost")
+        with CursorFromConnectionPool() as cursor:
+            cursor.execute('SELECT DISTINCT tag, count(*) '
+                           'FROM article GROUP BY tag '
+                           'ORDER BY count DESC LIMIT 7')
+            raw_result = cursor.fetchall()
+            result = dict(raw_result)
+            for k in result.keys():
+                if k == 'Machine Learning and Artificial Intelligence':
+                    result['ML & AI'] = result.pop('Machine Learning and Artificial Intelligence')
+                elif k == 'Sentiment analysis of tweets':
+                    result['SA of tweets'] = result.pop('Sentiment analysis of tweets')
+                elif k == 'Data science toolkit':
+                    result['Data Science TK'] = result.pop('Data science toolkit')
+            return result
+
+    top_7_tags = top_7_tags()
+    top_7_tags = {k: v for k, v in sorted(
+        top_7_tags.items(), key=lambda item: item[1], reverse=True)}  # sort tags by counter, descending
 
     x = range(7)
     plt.figure(figsize=(9, 5))
-    rects = plt.bar(x, tags_count_top7.values())
-    plt.xticks(x, tags_count_top7.values(), rotation='horizontal')
+    rects = plt.bar(x, top_7_tags.values())
+    plt.xticks(x, top_7_tags.values(), rotation='horizontal')
     plt.yticks([], [])
     plt.title('Tags')
     plt.xlabel('Articles counter')
 
     def autolabel(rects):
-         """Attach a text label above each bar in *rects*, displaying its title."""
-         for rect, key in zip(rects, tags_count_top7.keys()):
-             height = rect.get_height()
-             plt.annotate('{}'.format(key),
-                          xy=(rect.get_x() + rect.get_width() / 2, height),
-                          xytext=(0, 3),  # 3 points vertical offset
-                          textcoords="offset points",
-                          ha='center', va='bottom')
+        """Attach a text label above each bar in *rects*, displaying its title."""
+        for rect, key in zip(rects, top_7_tags.keys()):
+            height = rect.get_height()
+            plt.annotate('{}'.format(key),
+                         xy=(rect.get_x() + rect.get_width() / 2, height),
+                         xytext=(0, 3),  # 3 points vertical offset
+                         textcoords="offset points",
+                         ha='center', va='bottom')
 
     autolabel(rects)
     plt.tight_layout()
     return plt
 
 
-def get_top5_articles_df(csv_path=None):
-    if csv_path is None:  # use default file
-        articles = pd.read_csv('articles.csv')
-    else:
-        articles = pd.read_csv(csv_path)
-    top5_articles = articles.sort_values('publication_date', ascending=False).drop_duplicates('url').head(5)
+def get_top5_articles_df():
+    query = pd.read_sql_query("SELECT * FROM article", Database.get_connection())
+    top5_articles = query.sort_values('publication_date', ascending=False).drop_duplicates('url').head(5)
     return top5_articles
 
 
 def get_top5_authors_df(csv_path=None):
-    if csv_path is None:  # use default file
-        authors = pd.read_csv('authors.csv')
-    else:
-        authors = pd.read_csv(csv_path)
-    top5_authors = authors.sort_values('articles_counter', ascending=False).drop_duplicates('full_name').head(5)
+    query = pd.read_sql_query("SELECT * FROM author", Database.get_connection())
+    top5_authors = query.sort_values('articles_counter', ascending=False).head(5)
     return top5_authors
 
 
@@ -111,15 +117,8 @@ def generate_report(plt, art_cons, auth_cons, art_file, auth_file):
 
 if __name__ == "__main__":
     logging.info('Script started')
-    logging.info('Checking if file with data already exists . . .')
-    if os.path.isfile('authors.csv') and os.path.isfile('articles.csv'):  # data exists
-        logging.info('Data exists. Getting most recent blog-post date . . .')
-        return_code = run_command('scrapy crawl blog_check --nolog')  # check for new blog-posts and update data
-        '''blog_check spider is located in spiders/blog_check.py'''
-    else:
-        logging.info('Data does not exists. Starting spider . . .')
-        return_code = run_command('scrapy crawl blog_scraper --nolog')  # scrape all info from scratch and save data
-        '''blog_scraper spider is located in spiders/blog_parse.py'''
+    logging.info('Checking if data already exists . . .')
+    return_code = run_command('scrapy crawl blog_scraper --nolog')  # scrape all info from scratch and save data
     if return_code is 0:
         logging.info('Getting data for the report . . .')
         plt = get_top7_tags_plt()
@@ -130,4 +129,3 @@ if __name__ == "__main__":
         generate_report(plt, art_cons, auth_cons, art_file, auth_file)
     else:
         logging.fatal('Script execution has been stopped because of error')
-
