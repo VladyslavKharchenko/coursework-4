@@ -1,4 +1,4 @@
-Scrapy==2.0.1
+Scrapy==2.11.1
 bs4==0.0.1
 matplotlib==3.2.1
 pandas==1.0.3
